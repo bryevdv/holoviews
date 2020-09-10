@@ -46,8 +46,6 @@ class TestHoloViewsDash(TestPlotlyPlot):
         self.assertEqual(self.app.callback.call_count, 1)
         self.assertEqual(self.decorator.call_count, 1)
 
-        # triggered = [{"prop_id": "123"}]
-
         store_value = encode_store_data({})
 
         with patch.object(CallbackContext, "triggered", []):
@@ -210,4 +208,65 @@ class TestHoloViewsDash(TestPlotlyPlot):
 
     def test_kdims_dynamic_map(self):
         # Dynamic map with two key dimensions
-        pass
+        dmap = DynamicMap(
+            lambda kdim1: Scatter([kdim1, kdim1]),
+            kdims=["kdim1"]
+        ).redim.values(kdim1=[1, 2, 3, 4])
+
+        # Convert to Dash
+        components = holoviews_to_dash(self.app, [dmap])
+
+        # Check returned components
+        self.assertIsInstance(components, DashComponents)
+        self.assertEqual(len(components.graphs), 1)
+        self.assertEqual(len(components.kdims), 1)
+        self.assertIsInstance(components.store, Store)
+        self.assertEqual(len(components.resets), 0)
+
+        # Get arguments passed to @app.callback decorator
+        decorator_args = list(self.app.callback.call_args_list[0])[0]
+        outputs, inputs, states = decorator_args
+
+        # Check outputs
+        expected_outputs = [(g.id, "figure") for g in components.graphs] + \
+                           [(components.store.id, "data")]
+        self.assertEqual(
+            [(output.component_id, output.component_property) for output in outputs],
+            expected_outputs
+        )
+
+        # Check inputs
+        expected_inputs = [
+            (g.id, prop)
+            for g in components.graphs
+            for prop in ["selectedData", "relayoutData"]
+        ] + [(list(components.kdims.values())[0].children[1].id, 'value')]
+
+        self.assertEqual(
+            [(ip.component_id, ip.component_property) for ip in inputs],
+            expected_inputs,
+        )
+
+        # Check State
+        expected_state = [
+            (components.store.id, "data")
+        ]
+        self.assertEqual(
+            [(state.component_id, state.component_property) for state in states],
+            expected_state,
+        )
+
+        # Get callback function
+        callback_fn = self.decorator.call_args_list[0][0][0]
+
+        # mimic initial callback invocation
+        store_value = encode_store_data({"streams": {}})
+        with patch.object(CallbackContext, "triggered", []):
+            [fig, new_store] = callback_fn(
+                {}, {}, 3, None, store_value
+            )
+
+        # First figure is the scatter trace
+        self.assertEqual(fig["data"][0]["type"], "scatter")
+        self.assertEqual(list(fig["data"][0]["x"]), [0, 1])
+        self.assertEqual(list(fig["data"][0]["y"]), [3, 3])
