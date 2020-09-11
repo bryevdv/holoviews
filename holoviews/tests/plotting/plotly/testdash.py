@@ -4,8 +4,8 @@ from .testplot import TestPlotlyPlot
 from holoviews.plotting.plotly.dash import (
     holoviews_to_dash, DashComponents, encode_store_data, decode_store_data
 )
-from holoviews import Scatter, DynamicMap, Bounds
-from holoviews.streams import BoundsXY
+from holoviews import Scatter, DynamicMap, Bounds, Annotation
+from holoviews.streams import BoundsXY, RangeXY, Selection1D
 from dash_core_components import Store
 import plotly.io as pio
 pio.templates.default = None
@@ -56,10 +56,6 @@ class TestHoloViewsDash(TestPlotlyPlot):
         self.assertEqual(fig["data"][0]["type"], "scatter")
 
     def test_boundsxy_dynamic_map(self):
-        # Create dynamic map that inputs boundsxy, returns scatter on bounds
-        #   - Initial figure
-        #   - With a selection
-        #   - reset button, check that
         # Build Holoviews Elements
         scatter = Scatter([0, 0])
         boundsxy = BoundsXY(source=scatter)
@@ -198,13 +194,240 @@ class TestHoloViewsDash(TestPlotlyPlot):
         )
 
     def test_rangexy_dynamic_map(self):
+
         # Create dynamic map that inputs rangexy, returns scatter on bounds
-        pass
+        scatter = Scatter(
+            [[0, 1], [0, 1]], kdims=["x"], vdims=["y"]
+        )
+        rangexy = RangeXY(source=scatter)
+
+        def dmap_fn(x_range, y_range):
+            x_range = (0, 1) if x_range is None else x_range
+            y_range = (0, 1) if y_range is None else y_range
+            return Scatter(
+                [[x_range[0], y_range[0]],
+                 [x_range[1], y_range[1]]], kdims=["x1"], vdims=["y1"]
+            )
+
+        dmap = DynamicMap(dmap_fn, streams=[rangexy])
+
+        # Convert to Dash
+        components = holoviews_to_dash(self.app, [scatter, dmap], reset_button=True)
+
+        # Check returned components
+        self.assertIsInstance(components, DashComponents)
+        self.assertEqual(len(components.graphs), 2)
+        self.assertEqual(len(components.kdims), 0)
+        self.assertIsInstance(components.store, Store)
+        self.assertEqual(len(components.resets), 1)
+
+        # Get arguments passed to @app.callback decorator
+        decorator_args = list(self.app.callback.call_args_list[0])[0]
+        outputs, inputs, states = decorator_args
+
+        # Check outputs
+        expected_outputs = [(g.id, "figure") for g in components.graphs] + \
+                           [(components.store.id, "data")]
+        self.assertEqual(
+            [(output.component_id, output.component_property) for output in outputs],
+            expected_outputs
+        )
+
+        # Check inputs
+        expected_inputs = [
+                              (g.id, prop)
+                              for g in components.graphs
+                              for prop in ["selectedData", "relayoutData"]
+                          ] + [(components.resets[0].id, "n_clicks")]
+
+        self.assertEqual(
+            [(ip.component_id, ip.component_property) for ip in inputs],
+            expected_inputs,
+        )
+
+        # Check State
+        expected_state = [
+            (components.store.id, "data")
+        ]
+        self.assertEqual(
+            [(state.component_id, state.component_property) for state in states],
+            expected_state,
+        )
+
+        # Get callback function
+        callback_fn = self.app.callback.return_value.call_args[0][0]
+
+        # mimic initial callback invocation
+        store_value = encode_store_data({
+            "streams": {id(rangexy): rangexy.contents}
+        })
+        with patch.object(
+                CallbackContext,
+                "triggered",
+                [{"prop_id": components.graphs[0].id + ".relayoutData"}]
+        ):
+            [fig1, fig2, new_store] = callback_fn(
+                {}, {
+                  "xaxis.range[0]": 1,
+                  "xaxis.range[1]": 3,
+                  "yaxis.range[0]": 2,
+                  "yaxis.range[1]": 4
+                },
+                {}, {}, None, store_value
+            )
+
+        # First figure is the scatter trace
+        self.assertEqual(fig1["data"][0]["type"], "scatter")
+
+        # Second figure holds the bounds element
+        self.assertEqual(len(fig2["data"]), 1)
+        self.assertEqual(list(fig2["data"][0]["x"]), [1, 3])
+        self.assertEqual(list(fig2["data"][0]["y"]), [2, 4])
+
+        # Check updated store
+        self.assertEqual(
+            decode_store_data(new_store),
+            {"streams": {id(rangexy): {'x_range': (1, 3), 'y_range': (2, 4)}}}
+        )
 
     def test_selection1d_dynamic_map(self):
         # Create dynamic map that inputs selection1d, returns overlay of scatter on
         # selected points
-        pass
+        scatter = Scatter([[0, 0], [1, 1], [2, 2]])
+        selection1d = Selection1D(source=scatter)
+        dmap = DynamicMap(
+            lambda index: scatter.iloc[index].opts(size=len(index) + 1),
+            streams=[selection1d]
+        )
+
+        # Convert to Dash
+        components = holoviews_to_dash(self.app, [scatter, dmap], reset_button=True)
+
+        # Check returned components
+        self.assertIsInstance(components, DashComponents)
+        self.assertEqual(len(components.graphs), 2)
+        self.assertEqual(len(components.kdims), 0)
+        self.assertIsInstance(components.store, Store)
+        self.assertEqual(len(components.resets), 1)
+
+        # Get arguments passed to @app.callback decorator
+        decorator_args = list(self.app.callback.call_args_list[0])[0]
+        outputs, inputs, states = decorator_args
+
+        # Check outputs
+        expected_outputs = [(g.id, "figure") for g in components.graphs] + \
+                           [(components.store.id, "data")]
+        self.assertEqual(
+            [(output.component_id, output.component_property) for output in outputs],
+            expected_outputs
+        )
+
+        # Check inputs
+        expected_inputs = [
+                              (g.id, prop)
+                              for g in components.graphs
+                              for prop in ["selectedData", "relayoutData"]
+                          ] + [(components.resets[0].id, "n_clicks")]
+
+        self.assertEqual(
+            [(ip.component_id, ip.component_property) for ip in inputs],
+            expected_inputs,
+        )
+
+        # Check State
+        expected_state = [
+            (components.store.id, "data")
+        ]
+        self.assertEqual(
+            [(state.component_id, state.component_property) for state in states],
+            expected_state,
+        )
+
+        # Get callback function
+        callback_fn = self.app.callback.return_value.call_args[0][0]
+
+        # mimic initial callback invocation
+        store_value = encode_store_data({
+            "streams": {id(selection1d): selection1d.contents}
+        })
+        with patch.object(CallbackContext, "triggered", []):
+            [fig1, fig2, new_store] = callback_fn(
+                {}, {}, None, store_value
+            )
+
+        # Figure holds the scatter trace
+        self.assertEqual(len(fig2["data"]), 1)
+
+        # Check expected marker size
+        self.assertEqual(fig2["data"][0]["marker"]["size"], 1)
+        self.assertEqual(list(fig2["data"][0]["x"]), [])
+        self.assertEqual(list(fig2["data"][0]["y"]), [])
+
+        # Check updated store
+        self.assertEqual(
+            decode_store_data(new_store),
+            {"streams": {id(selection1d): {"index": []}}}
+        )
+
+        # Update store, then mimick a selection on scatter figure
+        store_value = new_store
+        with patch.object(
+                CallbackContext, "triggered",
+                [{"prop_id": inputs[0].component_id + ".selectedData"}]
+        ):
+            [fig1, fig2, new_store] = callback_fn(
+                {"points": [
+                    {
+                        "curveNumber": 0,
+                        "pointNumber": 0,
+                        "pointIndex": 0,
+                    },
+                    {
+                        "curveNumber": 0,
+                        "pointNumber": 2,
+                        "pointIndex": 2,
+                    }
+                ]},
+                {}, 0, store_value
+            )
+
+        # Figure holds the scatter trace
+        self.assertEqual(len(fig2["data"]), 1)
+
+        # Check expected marker size
+        self.assertEqual(fig2["data"][0]["marker"]["size"], 3)
+        self.assertEqual(list(fig2["data"][0]["x"]), [0, 2])
+        self.assertEqual(list(fig2["data"][0]["y"]), [0, 2])
+
+        # Check that store was updated
+        self.assertEqual(
+            decode_store_data(new_store),
+            {"streams": {id(selection1d): {"index": [0, 2]}}}
+        )
+
+        # Click reset button
+        store = new_store
+        with patch.object(
+                CallbackContext, "triggered",
+                [{"prop_id": components.resets[0].id + ".n_clicks"}]
+        ):
+            [fig1, fig2, new_store] = callback_fn(
+                {}, {}, 1, store
+            )
+
+        # Figure holds the scatter trace
+        self.assertEqual(len(fig2["data"]), 1)
+
+        # Check expected marker size
+        self.assertEqual(fig2["data"][0]["marker"]["size"], 1)
+        self.assertEqual(list(fig2["data"][0]["x"]), [])
+        self.assertEqual(list(fig2["data"][0]["y"]), [])
+
+        # Check that store was updated
+        self.assertEqual(
+            decode_store_data(new_store),
+            {"streams": {id(selection1d): {"index": []}}, 'reset_nclicks': 1},
+        )
 
     def test_kdims_dynamic_map(self):
         # Dynamic map with two key dimensions
