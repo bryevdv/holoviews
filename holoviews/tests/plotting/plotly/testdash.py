@@ -4,7 +4,7 @@ from .testplot import TestPlotlyPlot
 from holoviews.plotting.plotly.dash import (
     holoviews_to_dash, DashComponents, encode_store_data, decode_store_data
 )
-from holoviews import Scatter, DynamicMap, Bounds, Annotation
+from holoviews import Scatter, DynamicMap, Bounds
 from holoviews.streams import BoundsXY, RangeXY, Selection1D
 from dash_core_components import Store
 import plotly.io as pio
@@ -164,7 +164,6 @@ class TestHoloViewsDash(TestPlotlyPlot):
         )
 
         # Click reset button
-        store = new_store
         with patch.object(
                 CallbackContext, "triggered",
                 [{"prop_id": components.resets[0].id + ".n_clicks"}]
